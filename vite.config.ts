@@ -2,17 +2,7 @@ import { defineConfig, loadEnv, type UserConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-// https://vite.dev/config/
-export default defineConfig(async ({ mode }): Promise<UserConfig> => {
-  const plugins = [react(), tailwindcss()];
-  try {
-    // @ts-expect-error optional source-tags plugin
-    const m = await import('./.vite-source-tags.js');
-    plugins.push(m.sourceTags());
-  } catch {
-    /* optional plugin not present */
-  }
-
+export default defineConfig(({ mode }): UserConfig => {
   const env = loadEnv(mode, process.cwd(), ['VITE_', 'NEXT_PUBLIC_']);
   const processEnvDefines: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
@@ -20,7 +10,8 @@ export default defineConfig(async ({ mode }): Promise<UserConfig> => {
   }
 
   return {
-    plugins,
+    base: './',
+    plugins: [react(), tailwindcss()],
     envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
     define: processEnvDefines,
     server: {
