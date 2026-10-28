@@ -77,19 +77,25 @@ export function Emulator() {
   useEffect(() => {
     if (!activeApp) return;
     let revokedUrl: string | null = null;
+    let revokeMedia: (() => void) | null = null;
     let cancelled = false;
 
-    void extractApkAssets(activeApp.blob).then((assets) => {
-      if (cancelled) return;
-      const html = assets['index.html'];
+    void extractApkAssets(activeApp.blob).then(({ text, mediaUrls, revokeAll }) => {
+      if (cancelled) {
+        revokeAll();
+        return;
+      }
+      revokeMedia = revokeAll;
+      const html = text['index.html'];
       if (!html) {
         setFrameState({ appId: activeApp.id, url: null });
         return;
       }
-      const inlined = inlineAssets(html, assets);
+      const mediaScript = `<script>window.__APKFORGE_MEDIA__ = ${JSON.stringify(mediaUrls)};</script>`;
+      const inlined = inlineAssets(html, text);
       const withBridge = inlined.includes('<head>')
-        ? inlined.replace('<head>', `<head>${BRIDGE_SHIM}`)
-        : BRIDGE_SHIM + inlined;
+        ? inlined.replace('<head>', `<head>${mediaScript}${BRIDGE_SHIM}`)
+        : mediaScript + BRIDGE_SHIM + inlined;
       revokedUrl = URL.createObjectURL(new Blob([withBridge], { type: 'text/html' }));
       setFrameState({ appId: activeApp.id, url: revokedUrl });
     });
@@ -97,6 +103,7 @@ export function Emulator() {
     return () => {
       cancelled = true;
       if (revokedUrl) URL.revokeObjectURL(revokedUrl);
+      if (revokeMedia) revokeMedia();
     };
   }, [activeApp]);
 

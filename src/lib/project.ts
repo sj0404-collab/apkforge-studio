@@ -1,4 +1,4 @@
-import type { FileMap } from './vfs';
+import { isDataUri, type FileMap } from './vfs';
 
 export interface Problem {
   severity: 'error' | 'warning' | 'info';
@@ -111,7 +111,10 @@ export function parseProject(files: FileMap): { config: ProjectConfig; problems:
         source: 'manifest',
       });
     }
-    if (!/android\.permission\.INTERNET/.test(manifest) && /fetch\(|XMLHttpRequest/.test(JSON.stringify(files))) {
+    const hasNetCall = Object.values(files).some(
+      (v) => !isDataUri(v) && /fetch\(|XMLHttpRequest/.test(v),
+    );
+    if (!/android\.permission\.INTERNET/.test(manifest) && hasNetCall) {
       problems.push({
         severity: 'info',
         message: 'The payload performs network calls but INTERNET permission is not declared.',

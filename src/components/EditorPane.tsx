@@ -31,7 +31,8 @@ import 'monaco-editor/editor/contrib/links/browser/links';
 import editorWorker from 'monaco-editor/editor/editor.worker?worker';
 import { X } from 'lucide-react';
 import { useStudio } from '../lib/studio';
-import { languageFor } from '../lib/vfs';
+import { formatSize } from '../lib/project';
+import { decodeFileBytes, isDataUri, languageFor, mimeForPath } from '../lib/vfs';
 
 (self as unknown as { MonacoEnvironment: unknown }).MonacoEnvironment = {
   getWorker() {
@@ -121,10 +122,13 @@ export function EditorPane() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const activeContent = activeFile ? files[activeFile] : undefined;
+  const activeIsBinary = isDataUri(activeContent);
+
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor) return;
-    if (!activeFile) {
+    if (!activeFile || activeIsBinary) {
       editor.setModel(null);
       currentPath.current = undefined;
       return;
@@ -141,11 +145,11 @@ export function EditorPane() {
     editor.setModel(model);
     currentPath.current = activeFile;
     editor.focus();
-  }, [activeFile, files]);
+  }, [activeFile, activeIsBinary, files]);
 
   useEffect(() => {
     const editor = editorRef.current;
-    if (!editor || !activeFile) return;
+    if (!editor || !activeFile || activeIsBinary) return;
     const model = models.current.get(activeFile);
     if (!model) return;
     const external = files[activeFile];
@@ -154,7 +158,7 @@ export function EditorPane() {
       model.setValue(external);
       if (position) editor.setPosition(position);
     }
-  }, [files, activeFile]);
+  }, [files, activeFile, activeIsBinary]);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--bg-0)]">
@@ -187,7 +191,26 @@ export function EditorPane() {
           </div>
         )}
       </div>
-      <div ref={containerRef} className="min-h-0 flex-1" />
+      <div className="relative min-h-0 flex-1">
+        <div ref={containerRef} className={activeIsBinary ? 'hidden h-full w-full' : 'h-full w-full'} />
+        {activeFile && activeIsBinary && activeContent && (
+          <div className="flex h-full flex-col items-center justify-center gap-4 overflow-auto p-6 text-center">
+            {mimeForPath(activeFile).startsWith('image/') && (
+              <img
+                src={activeContent}
+                alt={activeFile}
+                className="max-h-[62vh] max-w-full rounded-xl border border-[var(--border)] object-contain shadow-xl"
+              />
+            )}
+            {mimeForPath(activeFile).startsWith('audio/') && (
+              <audio src={activeContent} controls className="w-[min(420px,90%)]" />
+            )}
+            <div className="font-mono text-[11.5px] text-[var(--muted)]">
+              {activeFile} · {mimeForPath(activeFile)} · {formatSize(decodeFileBytes(activeContent).length)} (stored uncompressed &amp; 4B aligned in APK)
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

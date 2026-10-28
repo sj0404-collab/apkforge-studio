@@ -5,7 +5,7 @@ import { compileManifestAxml, inspectManifestBytes } from './axml';
 import { buildDexAsync } from './dex';
 import { buildManifest, buildPkcs7, buildSignatureFile, sha256Hex, type LoadedKey } from './keys';
 import type { ProjectConfig } from './project';
-import type { FileMap } from './vfs';
+import { decodeFileBytes, mimeForPath, type FileMap } from './vfs';
 
 export interface ApkBuildResult {
   blob: Blob;
@@ -74,9 +74,10 @@ export async function buildApk(opts: {
   for (const [path, content] of Object.entries(files)) {
     if (path.startsWith(assetPrefix)) {
       const target = `assets/${path.slice(assetPrefix.length)}`;
+      if (target.endsWith('/.keep')) continue;
       zipEntries.push({
         path: target,
-        data: encoder.encode(content),
+        data: decodeFileBytes(content),
         store: UNCOMPRESSED_EXT.test(target),
       });
     }
@@ -168,20 +169,40 @@ export async function listApkEntries(blob: Blob): Promise<string[]> {
   }
 }
 
-export async function extractApkAssets(blob: Blob): Promise<Record<string, string>> {
-  const out: Record<string, string> = {};
+export async function extractApkAssets(blob: Blob): Promise<{
+  text: Record<string, string>;
+  mediaUrls: Record<string, string>;
+  revokeAll: () => void;
+}> {
+  const text: Record<string, string> = {};
+  const mediaUrls: Record<string, string> = {};
+  const createdUrls: string[] = [];
   try {
     const zip = await JSZip.loadAsync(blob);
     for (const [path, file] of Object.entries(zip.files)) {
       if (file.dir) continue;
       if (path.startsWith('assets/webapp/')) {
-        out[path.slice('assets/webapp/'.length)] = await file.async('string');
+        const rel = path.slice('assets/webapp/'.length);
+        if (UNCOMPRESSED_EXT.test(rel)) {
+          const bytes = await file.async('uint8array');
+          const url = URL.createObjectURL(
+            new Blob([new Uint8Array(bytes).buffer as ArrayBuffer], { type: mimeForPath(rel) }),
+          );
+          mediaUrls[rel] = url;
+          createdUrls.push(url);
+        } else {
+          text[rel] = await file.async('string');
+        }
       }
     }
   } catch {
     /* invalid zip */
   }
-  return out;
+  return {
+    text,
+    mediaUrls,
+    revokeAll: () => createdUrls.forEach((u) => URL.revokeObjectURL(u)),
+  };
 }
 
 export interface InspectedApk {

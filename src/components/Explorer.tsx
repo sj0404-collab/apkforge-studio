@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, FileCode2, Folder, FolderOpen } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight, FileCode2, Folder, FolderOpen, Upload } from 'lucide-react';
 import { useStudio } from '../lib/studio';
-import { buildTree, fileName, languageFor, type TreeNode } from '../lib/vfs';
+import { buildTree, encodeBinaryDataUri, fileName, isBinaryPath, languageFor, type TreeNode } from '../lib/vfs';
 
 function TreeRow({
   node,
@@ -73,12 +73,41 @@ function TreeRow({
 }
 
 export function Explorer() {
-  const { files, activeFile, openFile, tabs } = useStudio();
+  const { files, activeFile, openFile, tabs, writeFiles, pushTerminal } = useStudio();
+  const assetInputRef = useRef<HTMLInputElement>(null);
   const [expanded, setExpanded] = useState<Set<string>>(
-    () => new Set(['app', 'app/src', 'app/src/main', 'app/src/main/java', 'app/src/main/assets', 'app/src/main/res', 'app/src/test']),
+    () =>
+      new Set([
+        'app',
+        'app/src',
+        'app/src/main',
+        'app/src/main/java',
+        'app/src/main/assets',
+        'app/src/main/assets/webapp',
+        'app/src/main/assets/webapp/media',
+        'app/src/main/res',
+        'app/src/test',
+      ]),
   );
 
   const tree = useMemo(() => buildTree(files), [files]);
+
+  const handleAssetUpload = async (fileList: FileList | null) => {
+    if (!fileList || !fileList.length) return;
+    const patch: Record<string, string> = {};
+    for (const file of Array.from(fileList)) {
+      const targetPath = `app/src/main/assets/webapp/media/${file.name}`;
+      if (isBinaryPath(file.name)) {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        patch[targetPath] = encodeBinaryDataUri(bytes, file.name);
+      } else {
+        patch[targetPath] = await file.text();
+      }
+    }
+    writeFiles(patch);
+    setExpanded((prev) => new Set([...prev, 'app/src/main/assets/webapp', 'app/src/main/assets/webapp/media']));
+    pushTerminal(`Imported ${Object.keys(patch).length} asset(s) into app/src/main/assets/webapp/media/`, 'ok');
+  };
 
   const toggle = (path: string) => {
     setExpanded((prev) => {
@@ -93,7 +122,28 @@ export function Explorer() {
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-3 pb-1 pt-3">
         <span className="text-[11px] font-semibold uppercase tracking-[0.13em] text-[var(--muted)]">Explorer</span>
-        <span className="text-[10px] text-[var(--muted)] opacity-60">{Object.keys(files).length} files</span>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => assetInputRef.current?.click()}
+            className="flex items-center gap-1 rounded border border-[var(--border)] bg-[var(--bg-2)] px-1.5 py-0.5 text-[9.5px] font-medium text-[var(--accent)] hover:border-[var(--accent)]/60"
+            title="Import media/binary assets into webapp/media"
+          >
+            <Upload size={10} /> Assets
+          </button>
+          <input
+            ref={assetInputRef}
+            type="file"
+            multiple
+            accept="image/*,audio/*,.png,.jpg,.jpeg,.webp,.gif,.wav,.mp3,.ogg,.json,.txt"
+            className="hidden"
+            onChange={(e) => {
+              void handleAssetUpload(e.target.files);
+              e.target.value = '';
+            }}
+          />
+          <span className="text-[10px] text-[var(--muted)] opacity-60">{Object.keys(files).length} files</span>
+        </div>
       </div>
 
       {tabs.length > 0 && (

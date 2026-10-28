@@ -2,7 +2,7 @@ import JSZip from 'jszip';
 import { sha256Hex, type SigningKey } from './keys';
 import type { ProjectConfig } from './project';
 import { reportToHtml, reportToJUnitXml, type TestReport } from './tests';
-import type { FileMap } from './vfs';
+import { decodeFileBytes, isDataUri, type FileMap } from './vfs';
 
 export interface DeliveryResult {
   blob: Blob;
@@ -85,8 +85,13 @@ export async function createDeliveryZip(opts: {
   }
 
   for (const [path, content] of Object.entries(opts.files)) {
+    if (path.endsWith('/.keep')) continue;
     const target = `${root}/source/${path}`;
-    zip.file(target, content);
+    if (isDataUri(content)) {
+      zip.file(target, decodeFileBytes(content));
+    } else {
+      zip.file(target, content);
+    }
     entries.push(target);
   }
 

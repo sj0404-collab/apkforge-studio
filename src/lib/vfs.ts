@@ -7,6 +7,67 @@ export interface TreeNode {
   children?: TreeNode[];
 }
 
+const DATA_URI_RE = /^data:([^;,]+)?;base64,/;
+
+export function isBinaryPath(path: string): boolean {
+  return /\.(png|jpg|jpeg|webp|gif|mp3|mp4|ogg|wav|woff2)$/i.test(path);
+}
+
+export function mimeForPath(path: string): string {
+  const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+  switch (ext) {
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'webp':
+      return 'image/webp';
+    case 'gif':
+      return 'image/gif';
+    case 'wav':
+      return 'audio/wav';
+    case 'mp3':
+      return 'audio/mpeg';
+    case 'ogg':
+      return 'audio/ogg';
+    case 'mp4':
+      return 'video/mp4';
+    case 'woff2':
+      return 'font/woff2';
+    default:
+      return 'application/octet-stream';
+  }
+}
+
+export function isDataUri(content: string | undefined): boolean {
+  return Boolean(content && DATA_URI_RE.test(content));
+}
+
+export function encodeBinaryDataUri(bytes: Uint8Array, path: string): string {
+  const mime = mimeForPath(path);
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return `data:${mime};base64,${btoa(binary)}`;
+}
+
+export function decodeFileBytes(content: string): Uint8Array {
+  const match = DATA_URI_RE.exec(content);
+  if (!match) {
+    return new TextEncoder().encode(content);
+  }
+  const b64 = content.slice(match[0].length);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    out[i] = bin.charCodeAt(i);
+  }
+  return out;
+}
+
 export function listPaths(files: FileMap): string[] {
   return Object.keys(files).sort();
 }
@@ -99,12 +160,23 @@ export function languageFor(path: string): string {
       return 'shell';
     case 'properties':
       return 'ini';
+    case 'png':
+    case 'jpg':
+    case 'jpeg':
+    case 'webp':
+    case 'gif':
+      return 'img';
+    case 'wav':
+    case 'mp3':
+    case 'ogg':
+      return 'audio';
     default:
       return 'plaintext';
   }
 }
 
 export function countLines(text: string): number {
+  if (isDataUri(text)) return 1;
   return text.split('\n').length;
 }
 
@@ -123,4 +195,10 @@ export const FILE_ICONS: Record<string, string> = {
   yml: 'Y',
   gradle: 'G',
   png: 'IMG',
+  jpg: 'IMG',
+  jpeg: 'IMG',
+  webp: 'IMG',
+  wav: 'AUD',
+  mp3: 'AUD',
+  ogg: 'AUD',
 };
