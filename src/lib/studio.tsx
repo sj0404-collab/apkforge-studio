@@ -18,6 +18,7 @@ import { parseProject, type Problem, type ProjectConfig } from './project';
 import { runCommand, type Out } from './shell';
 import { createTemplate, TEMPLATES } from './templates';
 import { runTests, type TestReport } from './tests';
+import { BLOB_THRESHOLD, IDB_MARKER, deleteBigFile, getAllBigFiles, getBigFile, putBigFile } from './blobstore';
 import type { FileMap } from './vfs';
 
 export type ActivityView = 'explorer' | 'search' | 'keys' | 'build' | 'assistant';
@@ -53,14 +54,32 @@ const FILES_KEY = 'apkforge.files.v3';
 const KEYS_KEY = 'apkforge.keys.v3';
 const TEMPLATE_KEY = 'apkforge.template.v3';
 
+// Big binaries are hydrated from IndexedDB before React mounts (see main.tsx).
+let preloadedBigFiles: FileMap = {};
+export function setPreloadedBigFiles(map: FileMap) {
+  preloadedBigFiles = map;
+}
+
 function loadFiles(): FileMap {
+  let stored: FileMap = {};
   try {
     const raw = localStorage.getItem(FILES_KEY);
-    if (raw) return JSON.parse(raw) as FileMap;
+    if (raw) stored = JSON.parse(raw) as FileMap;
   } catch {
     /* ignore */
   }
-  return createTemplate('webview');
+  const merged: FileMap = { ...stored };
+  Object.keys(preloadedBigFiles).forEach((path) => {
+    merged[path] = preloadedBigFiles[path];
+  });
+  Object.keys(merged).forEach((path) => {
+    const value = merged[path];
+    if (typeof value === 'string' && value.startsWith(IDB_MARKER) && preloadedBigFiles[path]) {
+      merged[path] = preloadedBigFiles[path];
+    }
+  });
+  if (!Object.keys(merged).length) return createTemplate('webview');
+  return merged;
 }
 
 function loadKeys(): { debug: SigningKey | null; release: SigningKey | null } {
@@ -204,11 +223,46 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const logBuffer = useRef<string[]>([]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(FILES_KEY, JSON.stringify(files));
-    } catch {
-      /* quota */
-    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      const light: FileMap = {};
+      const heavy: Array<[string, string]> = [];
+      Object.keys(files).forEach((path) => {
+        const value = files[path];
+        if (typeof value === 'string' && value.startsWith('data:') && value.length >= BLOB_THRESHOLD) {
+          light[path] = `${IDB_MARKER}${path}`;
+          heavy.push([path, value]);
+        } else {
+          light[path] = value;
+        }
+      });
+      for (const [path, value] of heavy) {
+        if (cancelled) return;
+        const ok = await putBigFile(path, value);
+        if (!ok) {
+          // IndexedDB unavailable: fall back to keeping it in memory only.
+          delete light[path];
+        }
+      }
+      if (cancelled) return;
+      try {
+        localStorage.setItem(FILES_KEY, JSON.stringify(light));
+      } catch {
+        /* quota — the file map still lives in memory for this session */
+      }
+      // Drop IndexedDB rows whose files no longer exist.
+      try {
+        const existing = await getAllBigFiles();
+        const keep = new Set(heavy.map(([p]) => p));
+        await Promise.all(Object.keys(existing).filter((p) => !keep.has(p)).map((p) => deleteBigFile(p)));
+      } catch {
+        /* ignore */
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [files]);
 
   useEffect(() => {
