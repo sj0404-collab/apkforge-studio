@@ -34,8 +34,8 @@ const ANDROID_ATTR_TABLE: readonly { name: string; resId: number }[] = [
   { name: 'compileSdkVersion', resId: 0x01010572 },
 ];
 
-// Built-in Android Material dark no-action-bar system theme
-const ANDROID_STYLE_MATERIAL_NO_ACTION_BAR = 0x01030238;
+// Built-in Android Material dark no-action-bar system theme (android.R.style.Theme_Material_NoActionBar)
+const ANDROID_STYLE_MATERIAL_NO_ACTION_BAR = 0x0103022e;
 
 function u16(v: number): number[] {
   return [v & 0xff, (v >>> 8) & 0xff];
