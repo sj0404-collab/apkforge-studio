@@ -5,7 +5,7 @@ import { compileManifestAxml, inspectManifestBytes } from './axml';
 import { buildDexAsync } from './dex';
 import { buildManifest, buildPkcs7, buildSignatureFile, sha256Hex, type LoadedKey } from './keys';
 import type { ProjectConfig } from './project';
-import { decodeFileBytes, mimeForPath, type FileMap } from './vfs';
+import { decodeFileBytes, isDataUri, mimeForPath, type FileMap } from './vfs';
 
 export interface ApkBuildResult {
   blob: Blob;
@@ -53,7 +53,10 @@ export async function buildApk(opts: {
     appLabel: config.label,
   });
 
-  const iconPng = await buildLauncherIconPng();
+  // A project may ship its own launcher icon as a PNG data URI; otherwise use the generator.
+  const customIcon = files['app/src/main/res/drawable/ic_launcher.png'];
+  const iconPng =
+    customIcon && isDataUri(customIcon) ? decodeFileBytes(customIcon) : await buildLauncherIconPng();
 
   const dex = await buildDexAsync({
     classDescriptor: `L${config.namespace.replace(/\./g, '/')}/MainActivity;`,

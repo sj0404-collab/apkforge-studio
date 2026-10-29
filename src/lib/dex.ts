@@ -2,7 +2,9 @@
 //
 // Emits two real Android classes with executable Dalvik bytecode:
 //   1. <namespace>.Bridge  — @JavascriptInterface methods showToast(String),
-//      log(String) and deviceInfo() backed by android.widget.Toast and android.util.Log.
+//      log(String), deviceInfo(), vibrate(int), speak(String,float,float) and
+//      stopSpeech() backed by android.widget.Toast, android.util.Log, the
+//      vibrator service and the device TextToSpeech engine.
 //   2. <namespace>.MainActivity extends android.app.Activity — <init>()V and
 //      onCreate(Bundle)V instantiating android.webkit.WebView, enabling JS & DOM
 //      storage, wiring Bridge as `window.Android`, and loading
@@ -128,6 +130,7 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
   const logTag = 'APKForge';
   const jsBridgeName = 'Android';
   const vibratorServiceName = 'vibrator';
+  const ttsUtteranceId = 'aether-tts';
 
   // Types referenced across MainActivity + Bridge
   const T_VOID = 'V';
@@ -148,6 +151,9 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
   const T_JSIFACE = 'Landroid/webkit/JavascriptInterface;';
   const T_LOG = 'Landroid/util/Log;';
   const T_TOAST = 'Landroid/widget/Toast;';
+  const T_FLOAT = 'F';
+  const T_TTS = 'Landroid/speech/tts/TextToSpeech;';
+  const T_TTSLISTENER = 'Landroid/speech/tts/TextToSpeech$OnInitListener;';
 
   const protoSpecs: ProtoSpec[] = [
     { key: '()V', shorty: 'V', returnType: T_VOID, params: [] },
@@ -155,6 +161,27 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
     { key: '()Landroid/webkit/WebSettings;', shorty: 'L', returnType: T_WEBSETTINGS, params: [] },
     { key: '(Z)V', shorty: 'VZ', returnType: T_VOID, params: [T_BOOL] },
     { key: '(I)V', shorty: 'VI', returnType: T_VOID, params: [T_INT] },
+    { key: '()I', shorty: 'I', returnType: T_INT, params: [] },
+    { key: '(F)I', shorty: 'IF', returnType: T_INT, params: [T_FLOAT] },
+    { key: '(Ljava/lang/String;FF)V', shorty: 'VLFF', returnType: T_VOID, params: [T_STR, T_FLOAT, T_FLOAT] },
+    {
+      key: '(Ljava/lang/String;FFLjava/lang/String;)V',
+      shorty: 'VLFFL',
+      returnType: T_VOID,
+      params: [T_STR, T_FLOAT, T_FLOAT, T_STR],
+    },
+    {
+      key: '(Landroid/content/Context;Landroid/speech/tts/TextToSpeech$OnInitListener;)V',
+      shorty: 'VLL',
+      returnType: T_VOID,
+      params: [T_CTX, T_TTSLISTENER],
+    },
+    {
+      key: '(Ljava/lang/CharSequence;ILandroid/os/Bundle;Ljava/lang/String;)I',
+      shorty: 'ILIL',
+      returnType: T_INT,
+      params: [T_CHARSEQ, T_INT, T_BUNDLE, T_STR],
+    },
     { key: '(J)V', shorty: 'VJ', returnType: T_VOID, params: [T_LONG] },
     { key: '(Landroid/content/Context;)V', shorty: 'VL', returnType: T_VOID, params: [T_CTX] },
     { key: '(Landroid/os/Bundle;)V', shorty: 'VL', returnType: T_VOID, params: [T_BUNDLE] },
@@ -172,7 +199,10 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
     },
   ];
 
-  const fieldSpecs: FieldSpec[] = [{ classDesc: bridgeClass, typeDesc: T_CTX, name: 'context' }];
+  const fieldSpecs: FieldSpec[] = [
+    { classDesc: bridgeClass, typeDesc: T_CTX, name: 'context' },
+    { classDesc: bridgeClass, typeDesc: T_TTS, name: 'tts' },
+  ];
 
   const methodSpecs: MethodSpec[] = [
     { key: 'Object.<init>', classDesc: T_OBJ, protoKey: '()V', name: '<init>' },
@@ -245,6 +275,30 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
     { key: 'Bridge.log', classDesc: bridgeClass, protoKey: '(Ljava/lang/String;)V', name: 'log' },
     { key: 'Bridge.showToast', classDesc: bridgeClass, protoKey: '(Ljava/lang/String;)V', name: 'showToast' },
     { key: 'Bridge.vibrate', classDesc: bridgeClass, protoKey: '(I)V', name: 'vibrate' },
+    { key: 'Bridge.speak', classDesc: bridgeClass, protoKey: '(Ljava/lang/String;FF)V', name: 'speak' },
+    {
+      key: 'Bridge.speakGendered',
+      classDesc: bridgeClass,
+      protoKey: '(Ljava/lang/String;FFLjava/lang/String;)V',
+      name: 'speak',
+    },
+    { key: 'Bridge.stopSpeech', classDesc: bridgeClass, protoKey: '()V', name: 'stopSpeech' },
+    // Device text-to-speech engine
+    {
+      key: 'TTS.<init>',
+      classDesc: T_TTS,
+      protoKey: '(Landroid/content/Context;Landroid/speech/tts/TextToSpeech$OnInitListener;)V',
+      name: '<init>',
+    },
+    { key: 'TTS.setPitch', classDesc: T_TTS, protoKey: '(F)I', name: 'setPitch' },
+    { key: 'TTS.setSpeechRate', classDesc: T_TTS, protoKey: '(F)I', name: 'setSpeechRate' },
+    {
+      key: 'TTS.speak',
+      classDesc: T_TTS,
+      protoKey: '(Ljava/lang/CharSequence;ILandroid/os/Bundle;Ljava/lang/String;)I',
+      name: 'speak',
+    },
+    { key: 'TTS.stop', classDesc: T_TTS, protoKey: '()I', name: 'stop' },
     // MainActivity methods
     { key: 'Main.<init>', classDesc: mainClass, protoKey: '()V', name: '<init>' },
     { key: 'Main.onCreate', classDesc: mainClass, protoKey: '(Landroid/os/Bundle;)V', name: 'onCreate' },
@@ -272,6 +326,9 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
       T_JSIFACE,
       T_LOG,
       T_TOAST,
+      T_FLOAT,
+      T_TTS,
+      T_TTSLISTENER,
     ]),
   );
 
@@ -287,6 +344,7 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
     logTag,
     jsBridgeName,
     vibratorServiceName,
+    ttsUtteranceId,
   ]);
 
   // 1. Sorted string table
@@ -392,6 +450,9 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
     methIdx('Bridge.log'),
     methIdx('Bridge.showToast'),
     methIdx('Bridge.vibrate'),
+    methIdx('Bridge.speak'),
+    methIdx('Bridge.stopSpeech'),
+    methIdx('Bridge.speakGendered'),
   ].sort((a, b) => a - b);
   const annotationsDirBytes = [
     ...u32(0), // class_annotations_off
@@ -403,7 +464,8 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
   cursor += annotationsDirBytes.length;
 
   // (e) TYPE_CODE_ITEM (0x2001) — 4-byte aligned, 6 methods across Bridge + MainActivity
-  const fBridgeCtx = 0; // only 1 field in sortedFields
+  const fBridgeCtx = sortedFields.findIndex((f) => f.name === 'context');
+  const fBridgeTts = sortedFields.findIndex((f) => f.name === 'tts');
 
   const bridgeInitCode = buildCodeItem({
     registers: 2,
@@ -488,6 +550,98 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
     ],
   });
 
+  // Bridge.speak(String text, float pitch, float rate): lazily creates the device TTS
+  // engine, applies the per-character pitch/rate and speaks the line.
+  const bridgeSpeakCode = buildCodeItem({
+    registers: 8, // v0..v3 locals, v4=this, v5=text, v6=pitch, v7=rate
+    ins: 4,
+    outs: 5,
+    insns: [
+      ...u16(0x4054),
+      ...u16(fBridgeTts), // iget-object v0, v4, Bridge.tts
+      ...u16(0x0038),
+      ...u16(0x0003), // if-eqz v0, +3  (to the create block)
+      ...u16(0x0b28), // goto +11 (to the speak block)
+      ...u16(0x0022),
+      ...u16(typeIdx(T_TTS)), // new-instance v0, TextToSpeech
+      ...u16(0x4154),
+      ...u16(fBridgeCtx), // iget-object v1, v4, Bridge.context
+      ...u16(0x0212), // const/4 v2, 0 (null init listener)
+      ...u16(0x3070),
+      ...u16(methIdx('TTS.<init>')),
+      ...u16(0x0210), // invoke-direct {v0, v1, v2}, TextToSpeech.<init>
+      ...u16(0x405b),
+      ...u16(fBridgeTts), // iput-object v0, v4, Bridge.tts
+      ...u16(0x206e),
+      ...u16(methIdx('TTS.setPitch')),
+      ...u16(0x0060), // invoke-virtual {v0, v6}, setPitch(F)
+      ...u16(0x206e),
+      ...u16(methIdx('TTS.setSpeechRate')),
+      ...u16(0x0070), // invoke-virtual {v0, v7}, setSpeechRate(F)
+      ...u16(0x0112), // const/4 v1, 0 (QUEUE_FLUSH)
+      ...u16(0x0212), // const/4 v2, 0 (null Bundle)
+      ...u16(0x031a),
+      ...u16(strIdx(ttsUtteranceId)), // const-string v3, "aether-tts"
+      ...u16(0x536e),
+      ...u16(methIdx('TTS.speak')),
+      ...u16(0x2150), // invoke-virtual {v0, v5, v1, v2, v3}, speak(...)
+      ...u16(0x000e), // return-void
+    ],
+  });
+
+  const bridgeSpeakGenderedCode = buildCodeItem({
+    registers: 9, // v0..v3 locals, v4=this, v5=text, v6=pitch, v7=rate, v8=gender
+    ins: 5,
+    outs: 5,
+    insns: [
+      ...u16(0x4054),
+      ...u16(fBridgeTts), // iget-object v0, v4, Bridge.tts
+      ...u16(0x0038),
+      ...u16(0x0003), // if-eqz v0, +3  (to the create block)
+      ...u16(0x0b28), // goto +11 (to the speak block)
+      ...u16(0x0022),
+      ...u16(typeIdx(T_TTS)), // new-instance v0, TextToSpeech
+      ...u16(0x4154),
+      ...u16(fBridgeCtx), // iget-object v1, v4, Bridge.context
+      ...u16(0x0212), // const/4 v2, 0 (null init listener)
+      ...u16(0x3070),
+      ...u16(methIdx('TTS.<init>')),
+      ...u16(0x0210), // invoke-direct {v0, v1, v2}, TextToSpeech.<init>
+      ...u16(0x405b),
+      ...u16(fBridgeTts), // iput-object v0, v4, Bridge.tts
+      ...u16(0x206e),
+      ...u16(methIdx('TTS.setPitch')),
+      ...u16(0x0060), // invoke-virtual {v0, v6}, setPitch(F)
+      ...u16(0x206e),
+      ...u16(methIdx('TTS.setSpeechRate')),
+      ...u16(0x0070), // invoke-virtual {v0, v7}, setSpeechRate(F)
+      ...u16(0x0112), // const/4 v1, 0 (QUEUE_FLUSH)
+      ...u16(0x0212), // const/4 v2, 0 (null Bundle)
+      ...u16(0x031a),
+      ...u16(strIdx(ttsUtteranceId)), // const-string v3, "aether-tts"
+      ...u16(0x536e),
+      ...u16(methIdx('TTS.speak')),
+      ...u16(0x2150), // invoke-virtual {v0, v5, v1, v2, v3}, speak(...)
+      ...u16(0x000e), // return-void
+    ],
+  });
+
+  const bridgeStopSpeechCode = buildCodeItem({
+    registers: 2, // v0 local, v1=this
+    ins: 1,
+    outs: 1,
+    insns: [
+      ...u16(0x1054),
+      ...u16(fBridgeTts), // iget-object v0, v1, Bridge.tts
+      ...u16(0x0038),
+      ...u16(0x0005), // if-eqz v0, +5 (skip the stop call)
+      ...u16(0x106e),
+      ...u16(methIdx('TTS.stop')),
+      ...u16(0x0000), // invoke-virtual {v0}, TextToSpeech.stop()
+      ...u16(0x000e), // return-void
+    ],
+  });
+
   const mainInitCode = buildCodeItem({
     registers: 1,
     ins: 1,
@@ -567,6 +721,9 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
     { key: 'Bridge.log', bytes: bridgeLogCode },
     { key: 'Bridge.showToast', bytes: bridgeToastCode },
     { key: 'Bridge.vibrate', bytes: bridgeVibrateCode },
+    { key: 'Bridge.speak', bytes: bridgeSpeakCode },
+    { key: 'Bridge.stopSpeech', bytes: bridgeStopSpeechCode },
+    { key: 'Bridge.speakGendered', bytes: bridgeSpeakGenderedCode },
     { key: 'Main.<init>', bytes: mainInitCode },
     { key: 'Main.onCreate', bytes: mainOnCreateCode },
   ];
@@ -609,7 +766,10 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
       superDesc: T_OBJ,
       sourceFile: bridgeSource,
       annotationsOff: annotationsDirOff,
-      instanceFields: [{ fieldIdx: fBridgeCtx, accessFlags: 0x0012 }], // ACC_PRIVATE | ACC_FINAL
+      instanceFields: [
+        { fieldIdx: fBridgeCtx, accessFlags: 0x0012 }, // ACC_PRIVATE | ACC_FINAL
+        { fieldIdx: fBridgeTts, accessFlags: 0x0002 }, // ACC_PRIVATE (assigned lazily)
+      ],
       directMethods: [
         { methodIdx: methIdx('Bridge.<init>'), accessFlags: 0x10001, codeOff: codeOffsets.get('Bridge.<init>')! },
       ],
@@ -618,6 +778,17 @@ export async function buildDexAsync(options: DexOptions): Promise<Uint8Array> {
         { methodIdx: methIdx('Bridge.log'), accessFlags: 0x0001, codeOff: codeOffsets.get('Bridge.log')! },
         { methodIdx: methIdx('Bridge.showToast'), accessFlags: 0x0001, codeOff: codeOffsets.get('Bridge.showToast')! },
         { methodIdx: methIdx('Bridge.vibrate'), accessFlags: 0x0001, codeOff: codeOffsets.get('Bridge.vibrate')! },
+        { methodIdx: methIdx('Bridge.speak'), accessFlags: 0x0001, codeOff: codeOffsets.get('Bridge.speak')! },
+        {
+          methodIdx: methIdx('Bridge.stopSpeech'),
+          accessFlags: 0x0001,
+          codeOff: codeOffsets.get('Bridge.stopSpeech')!,
+        },
+        {
+          methodIdx: methIdx('Bridge.speakGendered'),
+          accessFlags: 0x0001,
+          codeOff: codeOffsets.get('Bridge.speakGendered')!,
+        },
       ],
     },
     {
